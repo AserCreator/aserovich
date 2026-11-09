@@ -12,6 +12,9 @@ using Robust.Shared.Map;
 using Robust.Shared.Map.Components;
 using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
+using System.Numerics;
+using Content.Shared._OH;
+using Robust.Shared.Physics.Components;
 
 namespace Content.Client.Shuttles.UI;
 
@@ -169,6 +172,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
             DrawGrid(handle, ourGridToView, (ourGridId.Value, ourGrid), color);
             DrawDocks(handle, ourGridId.Value, ourGridToView);
+            DrawOrbit(handle, worldToShuttle * shuttleToView, ourGridId.Value);
         }
 
         // Draw radar position on the station
@@ -353,6 +357,62 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
                 handle.DrawPrimitives(DrawPrimitiveTopology.LineStrip, verts, color);
             }
         }
+    }
+
+    private void DrawOrbit(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid)
+    {
+        if (!EntManager.TryGetComponent(gridUid, out TransformComponent? xform) ||
+            !EntManager.TryGetComponent(gridUid, out PhysicsComponent? body) ||
+            !EntManager.HasComponent<OrbitalBodyComponent>(gridUid) ||
+            xform.MapUid is not { } map ||
+            !EntManager.TryGetComponent(map, out OrbitalGravityComponent? grav))
+        {
+            return;
+        }
+
+        var com = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(xform));
+
+        var r = new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
+        var v = new DoubleVec(body.LinearVelocity.X, body.LinearVelocity.Y);
+
+        if (!OrbitalMath.TryGetOrbit(r, v, grav.Mu, out var orbit))
+            return;
+
+        var color = Color.Cyan.WithAlpha(0.7f);
+        var center = new Vector2((float) grav.Center.X, (float) grav.Center.Y);
+
+        // Для незамкнутой орбиты рисуем только допустимый диапазон аномалии.
+        var nuMax = orbit.IsBound ? Math.PI : Math.Acos(-1 / orbit.E) * 0.98;
+        const int segments = 180;
+        const double maxRadius = 20000;
+
+        Vector2? prev = null;
+        for (var i = 0; i <= segments; i++)
+        {
+            var nu = -nuMax + 2 * nuMax * i / segments;
+            var p = orbit.PositionAt(nu);
+
+            if (p.Length() > maxRadius)
+            {
+                prev = null;
+                continue;
+            }
+
+            var world = center + new Vector2((float) p.X, (float) p.Y);
+            var screen = Vector2.Transform(world, worldToView);
+
+            if (prev != null)
+                handle.DrawLine(prev.Value, screen, color);
+
+            prev = screen;
+        }
+
+        // Центр притяжения и перицентр.
+        handle.DrawCircle(Vector2.Transform(center, worldToView), 4f, Color.Yellow);
+        var peri = orbit.PositionAt(0);
+        handle.DrawCircle(
+            Vector2.Transform(center + new Vector2((float) peri.X, (float) peri.Y), worldToView),
+            3f, Color.Green);
     }
 
     private Vector2 InverseScalePosition(Vector2 value)
