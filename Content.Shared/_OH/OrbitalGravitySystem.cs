@@ -205,9 +205,12 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
         var dist = Math.Max(len, grav.MinRadius);
         var k = grav.Mu / (dist * dist * dist);
         var a = new Vector2((float) (-r.X * k), (float) (-r.Y * k));
-        _physics.ApplyForce(uid, a * body.Mass, body: body);
+        // Импульс вместо силы: сила живёт только внутри шага физики и очищается, поэтому при подшагах или
+        // расхождении частоты тиков и физики действует не весь тик. Импульс даёт ровно a*dt.
+        var v0 = body.LinearVelocity; // скорость ДО нашего толчка — с ней сравнивается следующий тик
+        _physics.ApplyLinearImpulse(uid, a * body.Mass * frameTime, body: body);
 
-        orbital.PrevVel = body.LinearVelocity;
+        orbital.PrevVel = v0;
         orbital.PrevAccel = a;
     }
 

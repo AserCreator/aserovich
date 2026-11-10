@@ -12,9 +12,9 @@ using Robust.Shared.Map;
 using Robust.Shared.Map.Components;
 using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
-using System.Numerics;
 using Content.Shared._OH;
-using Robust.Shared.Physics.Components;
+using System.Diagnostics;
+using System.Collections.Generic;
 
 namespace Content.Client.Shuttles.UI;
 
@@ -363,20 +363,34 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
     {
         if (!EntManager.TryGetComponent(gridUid, out TransformComponent? xform) ||
             !EntManager.TryGetComponent(gridUid, out PhysicsComponent? body) ||
-            !EntManager.HasComponent<OrbitalBodyComponent>(gridUid) ||
+            !EntManager.TryGetComponent(gridUid, out OrbitalBodyComponent? orbital) ||
             xform.MapUid is not { } map ||
             !EntManager.TryGetComponent(map, out OrbitalGravityComponent? grav))
         {
             return;
         }
 
-        var com = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(xform));
+        OrbitData orbit;
+        if (orbital.OnRails)
+        {
+            // На рельсах элементы орбиты приходят с сервера и не меняются, поэтому линия не дрожит.
+            // Пересчёт по r и v каждый кадр давал рывки: положение и скорость на клиенте берутся
+            // из разных моментов (после шага физики и до него), и орбита чуть "гуляла".
+            orbit = new OrbitData(orbital.Mu, orbital.P, orbital.Ecc, orbital.Omega, orbital.Dir);
+            _smoothedOrbits.Remove(gridUid); // следующий физический режим начнёт сглаживание заново
+        }
+        else
+        {
+            // В физическом режиме (тяга, столкновения) орбита меняется, поэтому считаем по текущему состоянию.
+            var com = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(xform));
+            var r = new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
+            var v = new DoubleVec(body.LinearVelocity.X, body.LinearVelocity.Y);
 
-        var r = new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
-        var v = new DoubleVec(body.LinearVelocity.X, body.LinearVelocity.Y);
+            if (!OrbitalMath.TryGetOrbit(r, v, grav.Mu, out orbit))
+                return;
 
-        if (!OrbitalMath.TryGetOrbit(r, v, grav.Mu, out var orbit))
-            return;
+            orbit = SmoothOrbit(gridUid, orbit);
+        }
 
         var color = Color.Cyan.WithAlpha(0.7f);
         var center = new Vector2((float) grav.Center.X, (float) grav.Center.Y);
@@ -407,12 +421,109 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             prev = screen;
         }
 
-        // Центр притяжения и перицентр.
+        // Центр притяжения.
         handle.DrawCircle(Vector2.Transform(center, worldToView), 4f, Color.Yellow);
+
+        // У почти круглой орбиты перицентр и апоцентр неразличимы — маркеры не рисуем.
+        if (orbit.E < 0.005)
+            return;
+
         var peri = orbit.PositionAt(0);
-        handle.DrawCircle(
-            Vector2.Transform(center + new Vector2((float) peri.X, (float) peri.Y), worldToView),
-            3f, Color.Green);
+        DrawOrbitMarker(handle, worldToView,
+            center + new Vector2((float) peri.X, (float) peri.Y),
+            Color.Green,
+            $"Pe {orbit.Periapsis:F0} м");
+
+        // У незамкнутой орбиты апоцентра нет.
+        if (orbit.IsBound)
+        {
+            var apo = orbit.PositionAt(Math.PI);
+            DrawOrbitMarker(handle, worldToView,
+                center + new Vector2((float) apo.X, (float) apo.Y),
+                Color.Orange,
+                $"Ap {orbit.Apoapsis:F0} м");
+        }
+    }
+
+    private void DrawOrbitMarker(DrawingHandleScreen handle, Matrix3x2 worldToView, Vector2 world, Color color, string label)
+    {
+        var screen = Vector2.Transform(world, worldToView);
+        handle.DrawCircle(screen, 4f, color);
+        handle.DrawString(Font, screen + new Vector2(8f, -8f), label, color);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Сглаживание орбиты в физическом режиме. Добавить в класс ShuttleNavControl вместе с DrawOrbit.
+    // Нужны: using System.Diagnostics; using System.Collections.Generic;
+    // ---------------------------------------------------------------------------------------------
+
+    /// Постоянная времени сглаживания, секунды. Меньше — быстрее реакция на тягу, больше — плавнее линия.
+    private const double OrbitSmoothingTime = 0.2;
+
+    private readonly Dictionary<EntityUid, SmoothedOrbit> _smoothedOrbits = new();
+    private readonly Stopwatch _orbitClock = Stopwatch.StartNew();
+
+    private sealed class SmoothedOrbit
+    {
+        public double P;
+        public double Ex;
+        public double Ey;
+        public int Dir;
+        public double LastTime;
+    }
+
+    /// Экспоненциальное сглаживание параметров орбиты. Сглаживаются P и вектор эксцентриситета (ex, ey),
+    /// а не угол Omega: у почти круглой орбиты Omega скачет произвольно, а вектор ведёт себя плавно.
+    private OrbitData SmoothOrbit(EntityUid uid, OrbitData raw)
+    {
+        var now = _orbitClock.Elapsed.TotalSeconds;
+        var ex = raw.E * Math.Cos(raw.Omega);
+        var ey = raw.E * Math.Sin(raw.Omega);
+
+        // Раз в какое-то время убираем записи гридов, которые давно не рисовались.
+        if (_smoothedOrbits.Count > 32)
+        {
+            var stale = new List<EntityUid>();
+            foreach (var (key, value) in _smoothedOrbits)
+            {
+                if (now - value.LastTime > 5)
+                    stale.Add(key);
+            }
+
+            foreach (var key in stale)
+                _smoothedOrbits.Remove(key);
+        }
+
+        var dt = 0.0;
+        var reset = !_smoothedOrbits.TryGetValue(uid, out var s);
+        if (!reset)
+        {
+            dt = now - s!.LastTime;
+
+            // Первый кадр после паузы, смена направления или резкий скачок (столкновение, мощный импульс):
+            // не плавим, а сразу берём новое значение.
+            reset = dt > 0.5
+                    || s.Dir != raw.Direction
+                    || Math.Abs(raw.P - s.P) > 0.25 * s.P
+                    || Math.Sqrt((ex - s.Ex) * (ex - s.Ex) + (ey - s.Ey) * (ey - s.Ey)) > 0.25;
+        }
+
+        if (reset)
+        {
+            s = new SmoothedOrbit { P = raw.P, Ex = ex, Ey = ey, Dir = raw.Direction, LastTime = now };
+            _smoothedOrbits[uid] = s;
+            return raw;
+        }
+
+        var k = 1 - Math.Exp(-dt / OrbitSmoothingTime);
+        s!.P += (raw.P - s.P) * k;
+        s.Ex += (ex - s.Ex) * k;
+        s.Ey += (ey - s.Ey) * k;
+        s.LastTime = now;
+
+        var e = Math.Sqrt(s.Ex * s.Ex + s.Ey * s.Ey);
+        var omega = e > 1e-9 ? Math.Atan2(s.Ey, s.Ex) : 0;
+        return new OrbitData(raw.Mu, s.P, e, omega, s.Dir);
     }
 
     private Vector2 InverseScalePosition(Vector2 value)

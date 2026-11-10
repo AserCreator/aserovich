@@ -43,4 +43,6 @@ public sealed partial class OrbitalBodyComponent : Component
 
     /// Сколько тиков подряд невязка ускорения ниже порога.
     public int Settled;
+    public Vector2 LastResidual;
+    public float DampingSeen;
 }
