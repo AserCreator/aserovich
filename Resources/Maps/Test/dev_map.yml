@@ -984,14 +984,16 @@ entities:
     - type: OccluderTree
     - type: ChunkContainer
       chunkEntities: []
+    - type: OrbitalGravity
   - uid: 2709
     components:
     - type: MetaData
       name: grid
+    - type: OrbitalBody
     - type: Transform
       parent: 23
       rot: 3.141592653589793 rad
-      pos: -16.002125,-12.0247755
+      pos: -100,0
     - type: MapGrid
       chunks:
         0,0:
@@ -1022,7 +1024,6 @@ entities:
     - type: OccluderTree
     - type: SpreaderGrid
     - type: Shuttle
-      dampingModifier: 0.25
     - type: GridPathfinding
     - type: Gravity
       gravityShakeSound: !type:SoundPathSpecifier

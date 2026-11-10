@@ -20,7 +20,7 @@ public sealed partial class ShuttleComponent : Component
     /// Maximum velocity.
     /// </summary>
     [DataField]
-    public float BaseMaxLinearVelocity = 60f;
+    public float BaseMaxLinearVelocity = 200f;
 
     public const float MaxAngularVelocity = 4f;
 
@@ -60,7 +60,7 @@ public sealed partial class ShuttleComponent : Component
     /// Base damping modifier applied to the shuttle's physics component when not in FTL.
     /// </summary>
     [DataField]
-    public float BodyModifier = 0.25f;
+    public float BodyModifier = 0f;
 
     /// <summary>
     /// Final Damping Modifier for a shuttle.
