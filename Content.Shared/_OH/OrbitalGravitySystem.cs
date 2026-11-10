@@ -25,50 +25,85 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
         if (!TryComp(ent, out PhysicsComponent? body) || !TryComp(ent, out TransformComponent? xform))
             return;
 
-        // Орбитальному гриду нужна честная динамика без потерь энергии.
-        _physics.SetBodyType(ent, BodyType.Dynamic, body: body);
+        _physics.SetBodyType(ent, BodyType.Kinematic, body: body);
         _physics.SetLinearDamping(ent, body, 0f);
         _physics.SetAngularDamping(ent, body, 0f);
         _physics.SetSleepingAllowed(ent, body, false);
 
-        if (!ent.Comp.InitCircular || xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
+        if (xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
             return;
 
         var r = GetRelative(grav, xform, body);
         var dist = r.Length();
-        if (dist < grav.MinRadius)
+
+        // Фиксируем радиус при инициализации (если он еще не был задан, например, через маппинг)
+        if (ent.Comp.OrbitRadius <= 0)
+        {
+            ent.Comp.OrbitRadius = Math.Max(dist, grav.MinRadius);
+            Dirty(ent);
+        }
+
+        if (!ent.Comp.InitCircular || ent.Comp.OrbitRadius < grav.MinRadius)
             return;
 
-        // Касательная к радиусу, против часовой стрелки.
-        var tangent = new Vector2((float) (-r.Y / dist), (float) (r.X / dist));
-        var speed = Math.Sqrt(grav.Mu / dist);
-        _physics.SetLinearVelocity(ent, tangent * (float) speed, body: body);
+        var speed = Math.Sqrt(grav.Mu / ent.Comp.OrbitRadius);
+        var tangent = new Vector2((float)(-r.Y / dist), (float)(r.X / dist));
+        _physics.SetLinearVelocity(ent, tangent * (float)speed, body: body);
     }
 
     public override void Update(float frameTime)
     {
+        if (frameTime <= 0f)
+            return;
+
         var query = EntityQueryEnumerator<OrbitalBodyComponent, PhysicsComponent, TransformComponent>();
-        while (query.MoveNext(out var uid, out _, out var body, out var xform))
+        while (query.MoveNext(out var uid, out var orbitalBody, out var body, out var xform))
         {
-            if (body.BodyType != BodyType.Dynamic || body.Mass <= 0f)
-                continue;
             if (xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
                 continue;
 
-            // Вектор от тела к центру, считаем в double.
+            // Получаем вектор направления, но используем ЖЕСТКО зафиксированный радиус
             var r = GetRelative(grav, xform, body);
-            var dist = Math.Max(r.Length(), grav.MinRadius);
-            var accel = grav.Mu / (dist * dist);
-            var dir = new Vector2((float) (-r.X / dist), (float) (-r.Y / dist));
+            var currentDist = r.Length();
 
-            _physics.ApplyForce(uid, dir * (float) (accel * body.Mass), body: body);
+            if (currentDist < 1e-6)
+                continue;
+
+            // Если радиус в компоненте почему-то не инициализировался, берем текущий
+            if (orbitalBody.OrbitRadius <= 0)
+            {
+                orbitalBody.OrbitRadius = Math.Max(currentDist, grav.MinRadius);
+                Dirty(uid, orbitalBody);
+            }
+
+            var dist = orbitalBody.OrbitRadius;
+
+            // 1. Математически точная скорость для этого радиуса
+            var speed = Math.Sqrt(grav.Mu / dist);
+
+            // 2. Текущий угол вычисляем из фактического положения
+            var currentAngle = Math.Atan2(r.Y, r.X);
+
+            // 3. Шаг по орбите без накопления погрешности расстояния
+            var angularVelocity = speed / dist;
+            var newAngle = currentAngle + (angularVelocity * frameTime);
+
+            // 4. Проекция на строгую окружность вокруг Center
+            var newX = grav.Center.X + (dist * Math.Cos(newAngle));
+            var newY = grav.Center.Y + (dist * Math.Sin(newAngle));
+
+            var targetWorldPos = new Vector2((float)newX, (float)newY) - body.LocalCenter;
+            _xform.SetWorldPosition(uid, targetWorldPos);
+
+            // 5. Обновляем вектор физической скорости для плавности движения сущностей внутри грида
+            var tangent = new Vector2((float)(-Math.Sin(newAngle)), (float)Math.Cos(newAngle));
+            _physics.SetLinearVelocity(uid, tangent * (float)speed, body: body);
         }
     }
 
-    /// Положение центра масс грида относительно центра притяжения.
     private DoubleVec GetRelative(OrbitalGravityComponent grav, TransformComponent xform, PhysicsComponent body)
-{
-    var com = Vector2.Transform(body.LocalCenter, _xform.GetWorldMatrix(xform));
-    return new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
-}
+    {
+        var com = Vector2.Transform(body.LocalCenter, _xform.GetWorldMatrix(xform));
+        return new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
+    }
 }

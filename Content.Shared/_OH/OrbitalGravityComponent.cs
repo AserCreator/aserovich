@@ -7,10 +7,10 @@ namespace Content.Shared._OH;
 public sealed partial class OrbitalGravityComponent : Component
 {
     /// Гравитационный параметр GM (тайлы³/с²). 20000 при r=200 даёт v=10 м/с, период ≈125 с.
-    [DataField, AutoNetworkedField] public double Mu = 500000;
+    [DataField, AutoNetworkedField] public double Mu = 20000;
 
     [DataField, AutoNetworkedField] public Vector2 Center = Vector2.Zero;
 
     /// Ниже этого радиуса сила не растёт (защита от деления на ~0).
-    [DataField, AutoNetworkedField] public double MinRadius = 300;
+    [DataField, AutoNetworkedField] public double MinRadius = 30;
 }
