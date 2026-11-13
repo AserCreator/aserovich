@@ -113,5 +113,11 @@ public sealed partial class NavScreen : BoxContainer
             ("Y", $"{gridVelocity.Y + 10f * float.Epsilon:0.0}"));
         GridAngularVelocity.Text = Loc.GetString("shuttle-console-angular-velocity-value",
             ("angularVelocity", $"{-MathHelper.RadiansToDegrees(gridBody.AngularVelocity) + 10f * float.Epsilon:0.0}"));
+
+        var orbit = NavRadar.Orbit;
+        OrbitApoapsis.Text = orbit?.Apoapsis is { } apoapsis ? $"{apoapsis:0}" : "0.0";
+        OrbitPeriapsis.Text = orbit?.Periapsis is { } periapsis ? $"{periapsis:0}" : "0.0";
+        OrbitEccentricity.Text = orbit?.Eccentricity is { } eccentricity ? $"{eccentricity:0.000}" : "0.0";
+        OrbitPeriod.Text = orbit?.Period is { } period ? $"{period:0} с" : "0.0";
     }
 }

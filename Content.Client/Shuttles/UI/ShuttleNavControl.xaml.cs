@@ -57,6 +57,9 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
     private List<Entity<MapGridComponent>> _grids = new();
 
+    public readonly record struct OrbitInfo(double Eccentricity, double Periapsis, double? Apoapsis, double? Period);
+    public OrbitInfo? Orbit { get; private set; }
+
     public ShuttleNavControl() : base(64f, 256f, 256f)
     {
         RobustXamlLoader.Load(this);
@@ -146,6 +149,8 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         {
             return;
         }
+
+        Orbit = null;
 
         var xformQuery = EntManager.GetEntityQuery<TransformComponent>();
         var fixturesQuery = EntManager.GetEntityQuery<FixturesComponent>();
@@ -422,6 +427,14 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         double ex = _smoothedEx, ey = _smoothedEy, p = _smoothedP;
         double ecc = Math.Sqrt(ex * ex + ey * ey);
         double periapsisAngle = Math.Atan2(ey, ex);
+
+        // Апоапсис и период есть только у замкнутой орбиты.
+        var closed = ecc < 1;
+        Orbit = new OrbitInfo(
+            ecc,
+            p / (1 + ecc),
+            closed ? p / (1 - ecc) : null,
+            closed ? 2 * Math.PI * Math.Pow(p / (1 - ecc * ecc), 1.5) / Math.Sqrt(effectiveGM) : null);
 
         // Эллипс рисуем целиком, гиперболу (грид улетает) обрезаем по максимальному радиусу.
         const double maxRadius = 20000;

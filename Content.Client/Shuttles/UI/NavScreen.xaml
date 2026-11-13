@@ -43,6 +43,15 @@
             <Label Name="GridLinearVelocity" Text="0.0, 0.0" HorizontalExpand="True" Align="Right" />
             <Label Text="{Loc 'shuttle-console-angular-velocity'}" />
             <Label Name="GridAngularVelocity" Text="0.0" HorizontalExpand="True" Align="Right" />
+
+            <Label Text="Apoapsis"/>
+            <Label Name="OrbitApoapsis" Text="0.0" HorizontalExpand="True" Align="Right"/>
+            <Label Text="Periapsis"/>
+            <Label Name="OrbitPeriapsis" Text="0.0" HorizontalExpand="True" Align="Right"/>
+            <Label Text="Eccentricity"/>
+            <Label Name="OrbitEccentricity" Text="0.0" HorizontalExpand="True" Align="Right"/>
+            <Label Text="Period"/>
+            <Label Name="OrbitPeriod" Text="0.0" HorizontalExpand="True" Align="Right"/>
         </GridContainer>
         <controls:StripeBack MinSize="48 48">
             <Label
@@ -56,7 +65,7 @@
             Text="{Loc 'shuttle-console-iff-toggle'}"
             TextAlign="Center"
             ToggleMode="True"/>
-        
+
         <controls:StripeBack MinSize="48 48">
             <Label Text="{Loc 'shuttle-console-nav-legend'}"
                 VerticalExpand="True"
