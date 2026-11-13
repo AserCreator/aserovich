@@ -28,14 +28,22 @@ public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
         if (!TryComp(ent, out PhysicsComponent? body) || !TryComp(ent, out TransformComponent? xform))
             return;
 
-        if (!ent.Comp.InitCircular || xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
+        if (xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
             return;
 
-        Vector2 r = xform.WorldPosition - grav.Center;//GetRelative(grav, xform, body);
-        double dist = getLen(r);
-        var tangent = new Vector2((float) (-r.Y / dist), (float) (r.X / dist));
+        if (!ent.Comp.InitCircular)
+            return;
 
-        _physics.SetLinearVelocity(ent, tangent.Normalized() * (float)((grav.Mass*(float)grav.G)/(dist*dist))  * (1/body.Mass) * 0.016f, body: body);
+        Vector2 r = xform.WorldPosition - grav.Center;
+        double dist = getLen(r);
+
+        if (dist < 1f || body.Mass <= 0f)
+            return;
+
+        double targetGM = grav.G * grav.Mass / body.Mass;
+        double speed = Math.Sqrt(targetGM / dist);
+
+        _physics.SetLinearVelocity(ent, new Vector2(r.Y, -r.X) * (float) (speed / dist), body: body);
     }
     public override void Update(float frameTime)
     {

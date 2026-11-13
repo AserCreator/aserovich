@@ -950,6 +950,7 @@ entities:
         chunkSize: 4
     - type: BecomesStation
       id: Dev
+    - type: OrbitalBody
     - type: ImplicitRoof
     - type: ExplosionAirtightGrid
     - type: TileHistory
@@ -1081,6 +1082,7 @@ entities:
     components:
     - type: MetaData
       name: grid
+    - type: OrbitalBody
     - type: Transform
       parent: 23
       pos: -32,-17
@@ -19385,13 +19387,6 @@ entities:
     - type: Transform
       parent: 1
       pos: 45.5,61.5
-- proto: StationAnchorOff
-  entities:
-  - uid: 293
-    components:
-    - type: Transform
-      parent: 1
-      pos: 20.5,12.5
 - proto: StationMap
   entities:
   - uid: 1905
