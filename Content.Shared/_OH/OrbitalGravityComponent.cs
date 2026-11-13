@@ -8,7 +8,7 @@ public sealed partial class OrbitalGravityComponent : Component
 {
     /// Гравитационный параметр GM (тайлы³/с²). 20000 при r=200 даёт v=10 м/с, период ≈125 с.
     public double G = 6.67/Math.Pow(10,10);
-    [DataField, AutoNetworkedField] public double Mass = 2.645758E+19;
+    [DataField, AutoNetworkedField] public double Mass = 1.23E+14;
 
     [DataField, AutoNetworkedField] public Vector2 Center = Vector2.Zero;
 

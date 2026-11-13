@@ -407,7 +407,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             return;
 
         // Эффективное GM, как в TickPhysics (импульс без умножения на массу).
-        double effectiveGM = grav.G * grav.Mass / body.Mass;
+        double effectiveGM = grav.G * grav.Mass;
         double k = v.LengthSquared() / effectiveGM - 1 / radius;
         double radialDot = r.X * v.X + r.Y * v.Y;
         double direction = h > 0 ? 1 : -1;

@@ -40,7 +40,7 @@ public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
         if (dist < 1f || body.Mass <= 0f)
             return;
 
-        double effectiveGM = grav.G * grav.Mass / body.Mass;
+        double effectiveGM = grav.G * grav.Mass;
         double speed = Math.Sqrt(effectiveGM / dist);
 
         _physics.SetLinearVelocity(ent, new Vector2(r.Y, -r.X) * (float) (speed / dist), body: body);
@@ -73,15 +73,16 @@ public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
         OrbitalGravityComponent grav,
         float frameTime)
     {
-        Vector2 r = GetRelative(grav, xform, body);
+        Vector2 r = xform.WorldPosition - grav.Center;
         double dist = getLen(r);
-
-        double impulse = ((grav.Mass*(float)grav.G)/(dist*dist));
 
         if (dist < 1f)
             return;
 
-        _physics.ApplyLinearImpulse(uid, -r.Normalized()  *   (float)impulse  * frameTime, body: body);
+        double forceDist = Math.Max(dist, grav.MinRadius);
+        double impulse = grav.Mass * (float) grav.G / (forceDist * forceDist) * body.Mass;
+
+        _physics.ApplyLinearImpulse(uid, -r.Normalized() * (float) impulse * frameTime, body: body);
     }
     public double getLen(Vector2 vec)
     {
