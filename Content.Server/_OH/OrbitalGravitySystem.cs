@@ -6,10 +6,11 @@ using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
 using Robust.Shared.Physics.Systems;
 using Robust.Shared.Timing;
+using Content.Shared._OH;
 
-namespace Content.Shared._OH;
+namespace Content.Server._OH;
 
-public sealed partial class OrbitalGravitySystem : EntitySystem
+public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
 {
     [Dependency] private SharedPhysicsSystem _physics = default!;
     [Dependency] private SharedTransformSystem _xform = default!;
@@ -19,8 +20,8 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
     private EntityQuery<OrbitalGravityComponent> _gravQuery;
 
     // Временная отладка: раз в 5 секунд выводим состояние каждого орбитального тела.
-    private TimeSpan _nextDebug;
-    private bool _debugTick;
+    //private TimeSpan _nextDebug;
+    //private bool _debugTick;
 
     public override void Initialize()
     {
@@ -42,22 +43,32 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
         if (!ent.Comp.InitCircular || xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
             return;
 
-        var r = GetRelative(grav, xform, body);
-        var dist = r.Length();
-        if (dist < 1e-6)
-            return;
-
-        // Касательная к радиусу, против часовой стрелки.
+        Vector2 r = xform.WorldPosition - grav.Center;//GetRelative(grav, xform, body);
+        double dist = getLen(r);
         var tangent = new Vector2((float) (-r.Y / dist), (float) (r.X / dist));
 
-        // Снаружи MinRadius — v = sqrt(Mu/r), внутри (гравитация линейная по r) — v = r*sqrt(Mu/MinRadius^3).
-        var speed = dist >= grav.MinRadius
-            ? Math.Sqrt(grav.Mu / dist)
-            : dist * Math.Sqrt(grav.Mu / (grav.MinRadius * grav.MinRadius * grav.MinRadius));
-        _physics.SetLinearVelocity(ent, tangent * (float) speed, body: body);
+        _physics.SetLinearVelocity(ent, tangent.Normalized() * (float)((grav.Mass*(float)grav.G)/(dist*dist))  * (1/body.Mass) * 0.016f, body: body);
 
-        // Сразу на рельсы.
-        TryEnterRails(ent, ent.Comp, body, xform, grav);
+
+
+
+
+        //var r = GetRelative(grav, xform, body);
+        //var dist = r.Length();
+        //if (dist < 1e-6)
+        //    return;
+
+        //// Касательная к радиусу, против часовой стрелки.
+        //var tangent = new Vector2((float) (-r.Y / dist), (float) (r.X / dist));
+
+        //// Снаружи MinRadius — v = sqrt(Mu/r), внутри (гравитация линейная по r) — v = r*sqrt(Mu/MinRadius^3).
+        //var speed = dist >= grav.MinRadius
+        //    ? Math.Sqrt(grav.Mu / dist)
+        //    : dist * Math.Sqrt(grav.Mu / (grav.MinRadius * grav.MinRadius * grav.MinRadius));
+        //_physics.SetLinearVelocity(ent, tangent * (float) speed, body: body);
+
+        //// Сразу на рельсы.
+        //TryEnterRails(ent, ent.Comp, body, xform, grav);
     }
 
     public override void Update(float frameTime)
@@ -65,7 +76,7 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
         if (frameTime <= 0f)
             return;
 
-        _debugTick = _net.IsServer && _timing.CurTime >= _nextDebug;
+        //_debugTick = _net.IsServer && _timing.CurTime >= _nextDebug;
 
         var query = EntityQueryEnumerator<OrbitalBodyComponent, PhysicsComponent, TransformComponent>();
         while (query.MoveNext(out var uid, out var orbital, out var body, out var xform))
@@ -75,31 +86,90 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
 
             if (xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
             {
-                if (orbital.OnRails && _net.IsServer)
-                    LeaveRails(uid, orbital, body, "нет гравитации на карте");
+                //if (orbital.OnRails && _net.IsServer)
+                //    LeaveRails(uid, orbital, body, "нет гравитации на карте");
                 continue;
             }
+            TickPhysics(uid, orbital, body, xform, grav, frameTime);
+            //// Шаттловые системы могут вернуть демпфирование после MapInit — оно съедает скорость каждый тик.
+            //orbital.DampingSeen = body.LinearDamping; // до нашего сброса — показывает, кто его возвращает
+            //if (body.LinearDamping > 0f)
+            //    _physics.SetLinearDamping(uid, body, 0f);
 
-            // Шаттловые системы могут вернуть демпфирование после MapInit — оно съедает скорость каждый тик.
-            orbital.DampingSeen = body.LinearDamping; // до нашего сброса — показывает, кто его возвращает
-            if (body.LinearDamping > 0f)
-                _physics.SetLinearDamping(uid, body, 0f);
+            //if (orbital.OnRails)
+            //    TickRails(uid, orbital, body, xform, grav, frameTime);
 
-            if (orbital.OnRails)
-                TickRails(uid, orbital, body, xform, grav, frameTime);
+            //// TickRails мог сбросить флаг (тяга/столкновение) — тогда в этом же тике считаем физику.
+            //if (!orbital.OnRails)
+            //    TickPhysics(uid, orbital, body, xform, grav, frameTime);
 
-            // TickRails мог сбросить флаг (тяга/столкновение) — тогда в этом же тике считаем физику.
-            if (!orbital.OnRails)
-                TickPhysics(uid, orbital, body, xform, grav, frameTime);
-
-            if (_debugTick)
-                DebugState(uid, orbital, body, xform, grav);
+            //if (_debugTick)
+            //    DebugState(uid, orbital, body, xform, grav);
         }
 
-        if (_debugTick)
-            _nextDebug = _timing.CurTime + TimeSpan.FromSeconds(5);
+        //if (_debugTick)
+        //    _nextDebug = _timing.CurTime + TimeSpan.FromSeconds(5);
     }
 
+
+    private void TickPhysics(
+        EntityUid uid,
+        OrbitalBodyComponent orbital,
+        PhysicsComponent body,
+        TransformComponent xform,
+        OrbitalGravityComponent grav,
+        float frameTime)
+    {
+        // Вектор от центра к телу, считаем в double.
+
+
+        //if (_net.IsServer)
+        //{
+        // Невязка: насколько скорость изменилась сверх нашей же гравитации прошлого тика.
+        //var residual = (body.LinearVelocity - orbital.PrevVel) / frameTime - orbital.PrevAccel;
+        //orbital.LastResidual = residual;
+        //orbital.Settled = residual.Length() < orbital.ThrustThreshold ? orbital.Settled + 1 : 0;
+
+
+        Vector2 r = xform.WorldPosition - grav.Center;//GetRelative(grav, xform, body);
+        double dist = getLen(r);
+
+        double impulse = ((grav.Mass*(float)grav.G)/(dist*dist));
+
+        if (dist < 1f)
+            return;
+
+        // _physics.ApplyLinearImpulse(uid, -new Vector2((float)r.X,(float)r.Y)  *   impulse  * frameTime, body: body);
+        _physics.ApplyLinearImpulse(uid, -r.Normalized()  *   (float)impulse  * frameTime, body: body);
+        //var tangent = new Vector2((float) (-r.Y / dist), (float) (r.X / dist));
+
+        //_physics.SetLinearVelocity(ent, tangent * (grav.Mass*(float)grav.G*body.Mass)/(dist*dist), body: body);
+        //if (orbital.Settled >= orbital.SettleTicks)
+        //{
+        //    if (TryEnterRails(uid, orbital, body, xform, grav))
+        //        return;
+
+        //    orbital.Settled = 0; // повторная попытка через SettleTicks тиков
+        //}
+        //}
+
+        // Снаружи MinRadius — закон Ньютона. Внутри — как внутри однородного шара: сила растёт линейно с r
+        // и плавно обращается в ноль в центре (нет сингулярности и скачка направления).
+        //var dist = Math.Max(len, grav.MinRadius);
+        //var k = grav.Mu / (dist * dist * dist);
+        //var a = new Vector2((float) (-r.X * k), (float) (-r.Y * k));
+        // Импульс вместо силы: сила живёт только внутри шага физики и очищается, поэтому при подшагах или
+        // расхождении частоты тиков и физики действует не весь тик. Импульс даёт ровно a*dt.
+        //var v0 = body.LinearVelocity; // скорость ДО нашего толчка — с ней сравнивается следующий тик
+        //_physics.ApplyLinearImpulse(uid, a * body.Mass * frameTime, body: body);
+        //_physics.ApplyLinearImpulse(uid, -new Vector2((float)r.X,(float)r.Y)*(float)(grav.Mu * body.Mass / (len * len))   * frameTime, body: body);
+
+        //orbital.PrevVel = v0;
+        //orbital.PrevAccel = a;
+    }
+
+
+    /*
     private void DebugState(
         EntityUid uid,
         OrbitalBodyComponent orbital,
@@ -120,6 +190,9 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
 
         Log.Warning(text);
     }
+
+
+
 
     /// Режим "на рельсах": позиция и скорость берутся из аналитической орбиты.
     private void TickRails(
@@ -184,21 +257,21 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
         if (len < 1e-6)
             return;
 
-        if (_net.IsServer)
-        {
-            // Невязка: насколько скорость изменилась сверх нашей же гравитации прошлого тика.
-            var residual = (body.LinearVelocity - orbital.PrevVel) / frameTime - orbital.PrevAccel;
-            orbital.LastResidual = residual;
-            orbital.Settled = residual.Length() < orbital.ThrustThreshold ? orbital.Settled + 1 : 0;
+        //if (_net.IsServer)
+        //{
+        // Невязка: насколько скорость изменилась сверх нашей же гравитации прошлого тика.
+        var residual = (body.LinearVelocity - orbital.PrevVel) / frameTime - orbital.PrevAccel;
+        orbital.LastResidual = residual;
+        //orbital.Settled = residual.Length() < orbital.ThrustThreshold ? orbital.Settled + 1 : 0;
 
-            if (orbital.Settled >= orbital.SettleTicks)
-            {
-                if (TryEnterRails(uid, orbital, body, xform, grav))
-                    return;
+        //if (orbital.Settled >= orbital.SettleTicks)
+        //{
+        //    if (TryEnterRails(uid, orbital, body, xform, grav))
+        //        return;
 
-                orbital.Settled = 0; // повторная попытка через SettleTicks тиков
-            }
-        }
+        //    orbital.Settled = 0; // повторная попытка через SettleTicks тиков
+        //}
+        //}
 
         // Снаружи MinRadius — закон Ньютона. Внутри — как внутри однородного шара: сила растёт линейно с r
         // и плавно обращается в ноль в центре (нет сингулярности и скачка направления).
@@ -208,7 +281,8 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
         // Импульс вместо силы: сила живёт только внутри шага физики и очищается, поэтому при подшагах или
         // расхождении частоты тиков и физики действует не весь тик. Импульс даёт ровно a*dt.
         var v0 = body.LinearVelocity; // скорость ДО нашего толчка — с ней сравнивается следующий тик
-        _physics.ApplyLinearImpulse(uid, a * body.Mass * frameTime, body: body);
+        //_physics.ApplyLinearImpulse(uid, a * body.Mass * frameTime, body: body);
+        _physics.ApplyLinearImpulse(uid, -new Vector2((float)r.X,(float)r.Y)*(float)(grav.Mu * body.Mass / (len * len))   * frameTime, body: body);
 
         orbital.PrevVel = v0;
         orbital.PrevAccel = a;
@@ -272,9 +346,15 @@ public sealed partial class OrbitalGravitySystem : EntitySystem
     }
 
     /// Положение центра масс грида относительно центра притяжения.
-    private DoubleVec GetRelative(OrbitalGravityComponent grav, TransformComponent xform, PhysicsComponent body)
+
+    */
+    public double getLen(Vector2 vec)
+    {
+        return Math.Sqrt(vec.X*vec.X + vec.Y*vec.Y);
+    }
+    private Vector2 GetRelative(OrbitalGravityComponent grav, TransformComponent xform, PhysicsComponent body)
     {
         var com = Vector2.Transform(body.LocalCenter, _xform.GetWorldMatrix(xform));
-        return new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
+        return new Vector2(com.X - grav.Center.X, com.Y - grav.Center.Y);
     }
 }

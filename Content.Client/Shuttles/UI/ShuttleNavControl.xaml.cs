@@ -15,6 +15,7 @@ using Robust.Shared.Physics.Components;
 using Content.Shared._OH;
 using System.Diagnostics;
 using System.Collections.Generic;
+using Robust.Shared.Timing;
 
 namespace Content.Client.Shuttles.UI;
 
@@ -24,6 +25,10 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
     private readonly SharedMapSystem _maps;
     private readonly SharedShuttleSystem _shuttles;
     private readonly SharedTransformSystem _transform;
+
+    [Dependency] private IGameTiming _timing = default!;
+
+    //[Dependency] private SharedTransformSystem _xform = default!;
 
     /// <summary>
     /// Used to transform all of the radar objects. Typically is a shuttle console parented to a grid.
@@ -173,6 +178,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             DrawGrid(handle, ourGridToView, (ourGridId.Value, ourGrid), color);
             DrawDocks(handle, ourGridId.Value, ourGridToView);
             DrawOrbit(handle, worldToShuttle * shuttleToView, ourGridId.Value);
+            //DrawOrbit(handle, worldToShuttle * shuttleToView, ourGridId.Value);
         }
 
         // Draw radar position on the station
@@ -358,6 +364,22 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             }
         }
     }
+    public double getLen(Vector2 vec)
+    {
+        return Math.Sqrt(vec.X*vec.X + vec.Y*vec.Y);
+    }
+    private Vector2 GetRelative(OrbitalGravityComponent grav, TransformComponent xform, PhysicsComponent body)
+    {
+        var com = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(xform));
+        return new Vector2(com.X - grav.Center.X, com.Y - grav.Center.Y);
+    }
+
+    private Vector2 GetRelativePos(OrbitalGravityComponent grav, TransformComponent xform, Vector2 position)
+    {
+        var com = Vector2.Transform(position, _transform.GetWorldMatrix(xform));
+        return new Vector2(com.X - grav.Center.X, com.Y - grav.Center.Y);
+    }
+
 
     private void DrawOrbit(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid)
     {
@@ -370,27 +392,148 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             return;
         }
 
-        OrbitData orbit;
-        if (orbital.OnRails)
-        {
-            // На рельсах элементы орбиты приходят с сервера и не меняются, поэтому линия не дрожит.
-            // Пересчёт по r и v каждый кадр давал рывки: положение и скорость на клиенте берутся
-            // из разных моментов (после шага физики и до него), и орбита чуть "гуляла".
-            orbit = new OrbitData(orbital.Mu, orbital.P, orbital.Ecc, orbital.Omega, orbital.Dir);
-            _smoothedOrbits.Remove(gridUid); // следующий физический режим начнёт сглаживание заново
-        }
-        else
-        {
-            // В физическом режиме (тяга, столкновения) орбита меняется, поэтому считаем по текущему состоянию.
-            var com = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(xform));
-            var r = new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
-            var v = new DoubleVec(body.LinearVelocity.X, body.LinearVelocity.Y);
+        //OrbitData orbit = new OrbitData(orbital.Mu, orbital.P, orbital.Ecc, orbital.Omega, orbital.Dir);
+        var center = new Vector2((float) grav.Center.X, (float) grav.Center.Y);
+        var color = Color.Cyan.WithAlpha(0.7f);
 
-            if (!OrbitalMath.TryGetOrbit(r, v, grav.Mu, out orbit))
-                return;
+        const int segments = 5000;
+        //const double maxRadius = 20000;
 
-            orbit = SmoothOrbit(gridUid, orbit);
+        Vector2 bodyPos = xform.WorldPosition;
+        Vector2 prev = Vector2.Transform(bodyPos, worldToView);
+        //Vector2 offset = new Vector2(0,0);
+        float dt = (float)_timing.TickPeriod.TotalSeconds;
+        Vector2 linearVelocity = body.LinearVelocity;
+        float speedMult = 1;
+        Vector2? apoapsis = null;
+        Vector2? pereapsis = null;
+        bool pass = false;
+        for (var i = 0; i <= segments; i++)
+        {
+            //Vector2 nextpos = prev;
+            //var nu = -nuMax + 2 * nuMax * i / segments;
+            //var p = orbit.PositionAt(nu);
+
+            //if (p.Length() > maxRadius)
+            //{
+            //    prev = null;
+            //    continue;
+            //}
+            //var r = nextpos - xform.LocalPosition;//GetRelative(grav, xform, body);
+            //var len = r.Length();
+            Vector2 r = bodyPos - grav.Center;//GetRelativePos(grav, xform, bodyPos);//bodyPos - grav.Center;
+            double dist = getLen(r);
+
+            linearVelocity += -(r.Normalized()) * (float)((grav.Mass*(float)grav.G)/(dist*dist)) * (1/body.Mass)*dt * speedMult;
+
+            bodyPos += linearVelocity * dt * speedMult;
+            //offset  += linearVelocity* 0.016666f;
+
+            double resDist = Vector2.Distance(grav.Center, bodyPos);
+            if (apoapsis == null || Vector2.Distance(grav.Center, apoapsis.Value) < resDist)
+            {
+                apoapsis = bodyPos;
+            }
+            if (pereapsis == null || Vector2.Distance(grav.Center, pereapsis.Value) > resDist)
+            {
+                pereapsis = bodyPos;
+            }
+
+            var world = bodyPos;// + (-new Vector2((float)r.X,(float)r.Y)*(float)(grav.Mu * body.Mass / (len * len)));//center + new Vector2((float) p.X, (float) p.Y);
+            var screen = Vector2.Transform(world, worldToView);
+
+            //if (prev != null)
+            handle.DrawLine(prev, screen, color);
+            speedMult = 1;//1/Vector2.Distance(prev,screen);
+            prev = screen;
+            if(pass && Vector2.Distance(bodyPos, xform.WorldPosition) < 1)
+            {
+                handle.DrawLine(Vector2.Transform(xform.WorldPosition, worldToView), screen, color);
+                break;
+            }
+            if(Vector2.Distance(bodyPos, xform.WorldPosition) > 1)
+            {
+                pass = true;
+            }
+
         }
+        handle.DrawCircle(Vector2.Transform(xform.WorldPosition, worldToView), 4f, Color.Yellow);
+        handle.DrawCircle(Vector2.Transform(center, worldToView), 10f, Color.Yellow);
+
+        if (apoapsis == null || pereapsis == null) return;
+        handle.DrawCircle(Vector2.Transform(apoapsis.Value, worldToView), 4f, color);
+        handle.DrawString(Font, Vector2.Transform(apoapsis.Value, worldToView) + new Vector2(8f, -8f), "Апоапсис "+Vector2.Distance(grav.Center, apoapsis.Value), color);
+
+        handle.DrawCircle(Vector2.Transform(pereapsis.Value, worldToView), 4f, color);
+        handle.DrawString(Font, Vector2.Transform(pereapsis.Value, worldToView) + new Vector2(8f, -8f), "Переапсис "+Vector2.Distance(grav.Center, pereapsis.Value), color);
+    }
+
+
+    /*
+    private void DrawOrbit(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid)
+    {
+        if (!EntManager.TryGetComponent(gridUid, out TransformComponent? xform) ||
+            !EntManager.TryGetComponent(gridUid, out PhysicsComponent? body) ||
+            !EntManager.TryGetComponent(gridUid, out OrbitalBodyComponent? orbital) ||
+            xform.MapUid is not { } map ||
+            !EntManager.TryGetComponent(map, out OrbitalGravityComponent? grav))
+        {
+            return;
+        }
+
+        OrbitData orbit = new OrbitData(orbital.Mu, orbital.P, orbital.Ecc, orbital.Omega, orbital.Dir);
+        var center = new Vector2((float) grav.Center.X, (float) grav.Center.Y);
+        var color = Color.Cyan.WithAlpha(0.7f);
+
+        const int segments = 180;
+        //const double maxRadius = 20000;
+
+        Vector2 prev = xform.LocalPosition;
+        for (var i = 0; i <= segments; i++)
+        {
+            Vector2 nextpos = prev;
+            //var nu = -nuMax + 2 * nuMax * i / segments;
+            //var p = orbit.PositionAt(nu);
+
+            //if (p.Length() > maxRadius)
+            //{
+            //    prev = null;
+            //    continue;
+            //}
+            var r = nextpos - xform.LocalPosition;//GetRelative(grav, xform, body);
+            var len = r.Length();
+            var world = nextpos + (-new Vector2((float)r.X,(float)r.Y)*(float)(grav.Mu * body.Mass / (len * len)));//center + new Vector2((float) p.X, (float) p.Y);
+            var screen = Vector2.Transform(world, worldToView);
+
+            //if (prev != null)
+            handle.DrawLine(prev, screen, color);
+
+            prev = screen;
+        }
+        handle.DrawCircle(Vector2.Transform(center, worldToView), 4f, Color.Yellow);
+        return;
+
+        OrbitData orbit = new OrbitData(orbital.Mu, orbital.P, orbital.Ecc, orbital.Omega, orbital.Dir);;
+        //if (orbital.OnRails)
+        //{
+        //    // На рельсах элементы орбиты приходят с сервера и не меняются, поэтому линия не дрожит.
+        //    // Пересчёт по r и v каждый кадр давал рывки: положение и скорость на клиенте берутся
+        //    // из разных моментов (после шага физики и до него), и орбита чуть "гуляла".
+        //    orbit = new OrbitData(orbital.Mu, orbital.P, orbital.Ecc, orbital.Omega, orbital.Dir);
+        //    _smoothedOrbits.Remove(gridUid); // следующий физический режим начнёт сглаживание заново
+        //}
+        //else
+        //{
+        // В физическом режиме (тяга, столкновения) орбита меняется, поэтому считаем по текущему состоянию.
+        var com = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(xform));
+        var r = new DoubleVec(com.X - grav.Center.X, com.Y - grav.Center.Y);
+        var v = new DoubleVec(body.LinearVelocity.X, body.LinearVelocity.Y);
+
+        if (!OrbitalMath.TryGetOrbit(r, v, grav.Mu, out orbit))
+            return;
+
+        orbit = SmoothOrbit(gridUid, orbit);
+        //}
 
         var color = Color.Cyan.WithAlpha(0.7f);
         var center = new Vector2((float) grav.Center.X, (float) grav.Center.Y);
@@ -443,6 +586,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
                 Color.Orange,
                 $"Ap {orbit.Apoapsis:F0} м");
         }
+
     }
 
     private void DrawOrbitMarker(DrawingHandleScreen handle, Matrix3x2 worldToView, Vector2 world, Color color, string label)
@@ -525,7 +669,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         var omega = e > 1e-9 ? Math.Atan2(s.Ey, s.Ex) : 0;
         return new OrbitData(raw.Mu, s.P, e, omega, s.Dir);
     }
-
+    */
     private Vector2 InverseScalePosition(Vector2 value)
     {
         return (value - MidPointVector) / MinimapScale;
