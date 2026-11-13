@@ -173,12 +173,13 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             var ourGridToWorld = _transform.GetWorldMatrix(ourGridId.Value);
             var ourGridToShuttle = Matrix3x2.Multiply(ourGridToWorld, worldToShuttle);
             var ourGridToView = ourGridToShuttle * shuttleToView;
+            var worldToView = worldToShuttle * shuttleToView;
             var color = _shuttles.GetIFFColor(ourGridId.Value, self: true);
 
             DrawGrid(handle, ourGridToView, (ourGridId.Value, ourGrid), color);
             DrawDocks(handle, ourGridId.Value, ourGridToView);
             DrawOrbit(handle, worldToShuttle * shuttleToView, ourGridId.Value);
-            //DrawOrbit(handle, worldToShuttle * shuttleToView, ourGridId.Value);
+            DrawVelocity(handle, worldToView, ourGridId.Value, color);
         }
 
         // Draw radar position on the station
@@ -215,6 +216,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
             var curGridToWorld = _transform.GetWorldMatrix(gUid);
             var curGridToView = curGridToWorld * worldToShuttle * shuttleToView;
+            var worldToView = worldToShuttle * shuttleToView;
 
             var labelColor = _shuttles.GetIFFColor(grid, self: false, iff);
             var coordColor = new Color(labelColor.R * 0.8f, labelColor.G * 0.8f, labelColor.B * 0.8f, 0.5f);
@@ -286,6 +288,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
             DrawGrid(handle, curGridToView, grid, labelColor);
             DrawDocks(handle, gUid, curGridToView);
+            DrawVelocity(handle, worldToView, gUid, labelColor);
         }
 
         // If we've set the controlling console, and it's on a different grid
@@ -455,7 +458,6 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         var offset = new Vector2((float) (distance * Math.Cos(angle)), (float) (distance * Math.Sin(angle)));
         return Vector2.Transform(center + offset, worldToView);
     }
-
     private void DrawApsis(
         DrawingHandleScreen handle,
         Matrix3x2 worldToView,
@@ -470,7 +472,21 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         handle.DrawCircle(screen, 4f, color);
         handle.DrawString(Font, screen + new Vector2(8f, -8f), $"{name} {distance:F0}", color);
     }
+    private void DrawVelocity(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid, Color color)
+    {
+        if (!EntManager.TryGetComponent(gridUid, out PhysicsComponent? body) ||
+            body.LinearVelocity.Length() < 0.1)
+            return;
 
+        // Центр масс грида и точка, где он окажется через VelocityLookAheadSeconds при текущей скорости.
+        var centerWorld = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(gridUid));
+        var start = Vector2.Transform(centerWorld, worldToView);
+        var end = Vector2.Transform(centerWorld + body.LinearVelocity * 6, worldToView);
+        var lineColor = color.WithAlpha(0.5f);
+
+        handle.DrawLine(start, end, lineColor);
+        handle.DrawRect(new UIBox2(end.X - 5, end.Y - 5, end.X + 5, end.Y + 5), lineColor);
+    }
     private Vector2 InverseScalePosition(Vector2 value)
     {
         return (value - MidPointVector) / MinimapScale;
