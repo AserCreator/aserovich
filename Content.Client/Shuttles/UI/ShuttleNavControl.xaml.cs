@@ -452,7 +452,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
         var color = Color.Cyan.WithAlpha(0.4f);
         handle.DrawPrimitives(DrawPrimitiveTopology.LineStrip, _orbitPoints, color);
-        handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Green);
+        handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Cyan);
         DrawGridMarker(handle, worldToView, xform, grav.Center + r);
 
         // У круговой орбиты апсиды не имеют смысла.
@@ -499,7 +499,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         _gridMarker[1] = center - forward * 12 * 0.5f + side * 12 * 0.6f;
         _gridMarker[2] = center - forward * 12 * 0.5f - side * 12 * 0.6f;
 
-        handle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, _gridMarker, Color.Yellow);
+        handle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, _gridMarker, Color.Cyan);
     }
     private void DrawVelocity(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid, Color color)
     {
