@@ -372,6 +372,8 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
     private const int OrbitSegments = 256;
     private readonly Vector2[] _orbitPoints = new Vector2[OrbitSegments + 1];
+    private EntityUid? _smoothedGrid;
+    private double _smoothedDirection, _smoothedEx, _smoothedEy, _smoothedP;
 
     private void DrawOrbit(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid)
     {
@@ -390,52 +392,50 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         var v = body.LinearVelocity;
         var radius = r.Length();
 
-        if (radius < 1f)
+        // Момент импульса на единицу массы: знак задаёт направление (больше нуля - против часовой).
+        double h = r.X * v.Y - r.Y * v.X;
+
+        if (radius < 1f || Math.Abs(h) < 1e-6)
             return;
 
         // Эффективное GM, как в TickPhysics (импульс без умножения на массу).
         double effectiveGM = grav.G * grav.Mass / body.Mass;
-
-        // Момент импульса на единицу массы. Знак задаёт направление: больше нуля - против часовой.
-        double h = r.X * v.Y - r.Y * v.X;
-        if (Math.Abs(h) < 1e-6)
-            return; // падение строго на центр, орбиты нет
-
-        // Вектор эксцентриситета: направлен на периапсис, его длина равна эксцентриситету.
-        double speedSquared = v.LengthSquared();
+        double k = v.LengthSquared() / effectiveGM - 1 / radius;
         double radialDot = r.X * v.X + r.Y * v.Y;
-        double ex = (speedSquared / effectiveGM - 1 / radius) * r.X - radialDot / effectiveGM * v.X;
-        double ey = (speedSquared / effectiveGM - 1 / radius) * r.Y - radialDot / effectiveGM * v.Y;
+        double direction = h > 0 ? 1 : -1;
+
+        // Первый кадр или смена грида/направления: blend = 1, то есть без сглаживания.
+        var blend = _smoothedGrid == gridUid && _smoothedDirection == direction
+            ? 1 - Math.Exp(-_timing.FrameTime.TotalSeconds / 1) // 1 - OrbitSmoothingTime
+            : 1;
+
+        _smoothedGrid = gridUid;
+        _smoothedDirection = direction;
+        _smoothedEx += (k * r.X - radialDot / effectiveGM * v.X - _smoothedEx) * blend;
+        _smoothedEy += (k * r.Y - radialDot / effectiveGM * v.Y - _smoothedEy) * blend;
+        _smoothedP += (h * h / effectiveGM - _smoothedP) * blend;
+
+        // Вектор эксцентриситета (ex, ey) направлен на периапсис, p - параметр орбиты.
+        double ex = _smoothedEx, ey = _smoothedEy, p = _smoothedP;
         double ecc = Math.Sqrt(ex * ex + ey * ey);
         double periapsisAngle = Math.Atan2(ey, ex);
 
-        // Параметр орбиты: расстояние = p / (1 + ecc * cos(истинная аномалия)).
-        double p = h * h / effectiveGM;
-        double direction = h > 0 ? 1 : -1;
-
         // Эллипс рисуем целиком, гиперболу (грид улетает) обрезаем по максимальному радиусу.
         const double maxRadius = 20000;
-        double limit = Math.PI;
-        if (ecc >= 1)
-            limit = Math.Acos(Math.Clamp((p / maxRadius - 1) / ecc, -1, 1));
+        double limit = ecc < 1 ? Math.PI : Math.Acos(Math.Clamp((p / maxRadius - 1) / ecc, -1, 1));
 
         for (var i = 0; i <= OrbitSegments; i++)
         {
             double trueAnomaly = -limit + 2 * limit * i / OrbitSegments;
-            double orbitRadius = p / (1 + ecc * Math.Cos(trueAnomaly));
-            double angle = periapsisAngle + direction * trueAnomaly;
-
-            var world = grav.Center + new Vector2(
-                (float) (orbitRadius * Math.Cos(angle)),
-                (float) (orbitRadius * Math.Sin(angle)));
-
-            _orbitPoints[i] = Vector2.Transform(world, worldToView);
+            _orbitPoints[i] = OrbitPointToView(
+                grav.Center,
+                periapsisAngle + direction * trueAnomaly,
+                p / (1 + ecc * Math.Cos(trueAnomaly)),
+                worldToView);
         }
 
         var color = Color.Cyan.WithAlpha(0.7f);
         handle.DrawPrimitives(DrawPrimitiveTopology.LineStrip, _orbitPoints, color);
-
-        // Грид и центр притяжения.
         handle.DrawCircle(Vector2.Transform(grav.Center + r, worldToView), 4f, Color.Yellow);
         handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Yellow);
 
@@ -449,6 +449,13 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             DrawApsis(handle, worldToView, grav.Center, periapsisAngle + Math.PI, p / (1 - ecc), "Ап", color);
     }
 
+    /// Точка на расстоянии distance от центра под углом angle, переведённая в координаты экрана.
+    private static Vector2 OrbitPointToView(Vector2 center, double angle, double distance, Matrix3x2 worldToView)
+    {
+        var offset = new Vector2((float) (distance * Math.Cos(angle)), (float) (distance * Math.Sin(angle)));
+        return Vector2.Transform(center + offset, worldToView);
+    }
+
     private void DrawApsis(
         DrawingHandleScreen handle,
         Matrix3x2 worldToView,
@@ -458,8 +465,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         string name,
         Color color)
     {
-        var world = center + new Vector2((float) (distance * Math.Cos(angle)), (float) (distance * Math.Sin(angle)));
-        var screen = Vector2.Transform(world, worldToView);
+        var screen = OrbitPointToView(center, angle, distance, worldToView);
 
         handle.DrawCircle(screen, 4f, color);
         handle.DrawString(Font, screen + new Vector2(8f, -8f), $"{name} {distance:F0}", color);
