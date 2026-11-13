@@ -102,6 +102,7 @@
         enum.WiresUiKey.Key:
           type: WiresBoundUserInterface
   - type: RadarConsole
+    maxRange: 768
   - type: PointLight
     radius: 1.5
     energy: 4.0

@@ -364,96 +364,105 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             }
         }
     }
-    public double getLen(Vector2 vec)
-    {
-        return Math.Sqrt(vec.X*vec.X + vec.Y*vec.Y);
-    }
     private Vector2 GetRelative(OrbitalGravityComponent grav, TransformComponent xform, PhysicsComponent body)
     {
         var com = Vector2.Transform(body.LocalCenter, _transform.GetWorldMatrix(xform));
         return new Vector2(com.X - grav.Center.X, com.Y - grav.Center.Y);
     }
 
-    private Vector2 GetRelativePos(OrbitalGravityComponent grav, TransformComponent xform, Vector2 position)
-    {
-        var com = Vector2.Transform(position, _transform.GetWorldMatrix(xform));
-        return new Vector2(com.X - grav.Center.X, com.Y - grav.Center.Y);
-    }
-
+    private const int OrbitSegments = 256;
+    private readonly Vector2[] _orbitPoints = new Vector2[OrbitSegments + 1];
 
     private void DrawOrbit(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid)
     {
         if (!EntManager.TryGetComponent(gridUid, out TransformComponent? xform) ||
             !EntManager.TryGetComponent(gridUid, out PhysicsComponent? body) ||
-            !EntManager.TryGetComponent(gridUid, out OrbitalBodyComponent? orbital) ||
+            !EntManager.HasComponent<OrbitalBodyComponent>(gridUid) ||
             xform.MapUid is not { } map ||
-            !EntManager.TryGetComponent(map, out OrbitalGravityComponent? grav))
+            !EntManager.TryGetComponent(map, out OrbitalGravityComponent? grav) ||
+            body.Mass <= 0f)
         {
             return;
         }
 
-        //OrbitData orbit = new OrbitData(orbital.Mu, orbital.P, orbital.Ecc, orbital.Omega, orbital.Dir);
-        var center = new Vector2((float) grav.Center.X, (float) grav.Center.Y);
-        var color = Color.Cyan.WithAlpha(0.7f);
+        // Положение и скорость относительно центра притяжения (точка та же, что на сервере).
+        var r = GetRelative(grav, xform, body);
+        var v = body.LinearVelocity;
+        var radius = r.Length();
 
-        const int segments = 5000;
-        //const double maxRadius = 20000;
+        if (radius < 1f)
+            return;
 
-        Vector2 bodyPos = xform.WorldPosition;
-        Vector2 prev = Vector2.Transform(bodyPos, worldToView);
-        //Vector2 offset = new Vector2(0,0);
-        float dt = (float)_timing.TickPeriod.TotalSeconds;
-        Vector2 linearVelocity = body.LinearVelocity;
-        float speedMult = 1;
-        Vector2? apoapsis = null;
-        Vector2? pereapsis = null;
-        bool pass = false;
-        for (var i = 0; i <= segments; i++)
+        // Эффективное GM, как в TickPhysics (импульс без умножения на массу).
+        double effectiveGM = grav.G * grav.Mass / body.Mass;
+
+        // Момент импульса на единицу массы. Знак задаёт направление: больше нуля - против часовой.
+        double h = r.X * v.Y - r.Y * v.X;
+        if (Math.Abs(h) < 1e-6)
+            return; // падение строго на центр, орбиты нет
+
+        // Вектор эксцентриситета: направлен на периапсис, его длина равна эксцентриситету.
+        double speedSquared = v.LengthSquared();
+        double radialDot = r.X * v.X + r.Y * v.Y;
+        double ex = (speedSquared / effectiveGM - 1 / radius) * r.X - radialDot / effectiveGM * v.X;
+        double ey = (speedSquared / effectiveGM - 1 / radius) * r.Y - radialDot / effectiveGM * v.Y;
+        double ecc = Math.Sqrt(ex * ex + ey * ey);
+        double periapsisAngle = Math.Atan2(ey, ex);
+
+        // Параметр орбиты: расстояние = p / (1 + ecc * cos(истинная аномалия)).
+        double p = h * h / effectiveGM;
+        double direction = h > 0 ? 1 : -1;
+
+        // Эллипс рисуем целиком, гиперболу (грид улетает) обрезаем по максимальному радиусу.
+        const double maxRadius = 20000;
+        double limit = Math.PI;
+        if (ecc >= 1)
+            limit = Math.Acos(Math.Clamp((p / maxRadius - 1) / ecc, -1, 1));
+
+        for (var i = 0; i <= OrbitSegments; i++)
         {
-            Vector2 r = bodyPos - grav.Center;
-            double dist = getLen(r);
+            double trueAnomaly = -limit + 2 * limit * i / OrbitSegments;
+            double orbitRadius = p / (1 + ecc * Math.Cos(trueAnomaly));
+            double angle = periapsisAngle + direction * trueAnomaly;
 
-            linearVelocity += -(r.Normalized()) * (float)((grav.Mass*(float)grav.G)/(dist*dist)) * (1/body.Mass)*dt * speedMult;
+            var world = grav.Center + new Vector2(
+                (float) (orbitRadius * Math.Cos(angle)),
+                (float) (orbitRadius * Math.Sin(angle)));
 
-            bodyPos += linearVelocity * dt * speedMult;
-
-            double resDist = Vector2.Distance(grav.Center, bodyPos);
-            if (apoapsis == null || Vector2.Distance(grav.Center, apoapsis.Value) < resDist)
-            {
-                apoapsis = bodyPos;
-            }
-            if (pereapsis == null || Vector2.Distance(grav.Center, pereapsis.Value) > resDist)
-            {
-                pereapsis = bodyPos;
-            }
-
-            var world = bodyPos;// + (-new Vector2((float)r.X,(float)r.Y)*(float)(grav.Mu * body.Mass / (len * len)));//center + new Vector2((float) p.X, (float) p.Y);
-            var screen = Vector2.Transform(world, worldToView);
-
-            //if (prev != null)
-            handle.DrawLine(prev, screen, color);
-            speedMult = 1;//1/Vector2.Distance(prev,screen);
-            prev = screen;
-            if(pass && Vector2.Distance(bodyPos, xform.WorldPosition) < 1)
-            {
-                handle.DrawLine(Vector2.Transform(xform.WorldPosition, worldToView), screen, color);
-                break;
-            }
-            if(Vector2.Distance(bodyPos, xform.WorldPosition) > 1)
-            {
-                pass = true;
-            }
-
+            _orbitPoints[i] = Vector2.Transform(world, worldToView);
         }
-        handle.DrawCircle(Vector2.Transform(xform.WorldPosition, worldToView), 4f, Color.Yellow);
-        handle.DrawCircle(Vector2.Transform(center, worldToView), 10f, Color.Yellow);
 
-        if (apoapsis == null || pereapsis == null) return;
-        handle.DrawCircle(Vector2.Transform(apoapsis.Value, worldToView), 4f, color);
-        handle.DrawString(Font, Vector2.Transform(apoapsis.Value, worldToView) + new Vector2(8f, -8f), "Апоапсис "+Vector2.Distance(grav.Center, apoapsis.Value), color);
+        var color = Color.Cyan.WithAlpha(0.7f);
+        handle.DrawPrimitives(DrawPrimitiveTopology.LineStrip, _orbitPoints, color);
 
-        handle.DrawCircle(Vector2.Transform(pereapsis.Value, worldToView), 4f, color);
-        handle.DrawString(Font, Vector2.Transform(pereapsis.Value, worldToView) + new Vector2(8f, -8f), "Переапсис "+Vector2.Distance(grav.Center, pereapsis.Value), color);
+        // Грид и центр притяжения.
+        handle.DrawCircle(Vector2.Transform(grav.Center + r, worldToView), 4f, Color.Yellow);
+        handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Yellow);
+
+        // У круговой орбиты апсиды не имеют смысла.
+        if (ecc < 0.001)
+            return;
+
+        DrawApsis(handle, worldToView, grav.Center, periapsisAngle, p / (1 + ecc), "Пе", color);
+
+        if (ecc < 1)
+            DrawApsis(handle, worldToView, grav.Center, periapsisAngle + Math.PI, p / (1 - ecc), "Ап", color);
+    }
+
+    private void DrawApsis(
+        DrawingHandleScreen handle,
+        Matrix3x2 worldToView,
+        Vector2 center,
+        double angle,
+        double distance,
+        string name,
+        Color color)
+    {
+        var world = center + new Vector2((float) (distance * Math.Cos(angle)), (float) (distance * Math.Sin(angle)));
+        var screen = Vector2.Transform(world, worldToView);
+
+        handle.DrawCircle(screen, 4f, color);
+        handle.DrawString(Font, screen + new Vector2(8f, -8f), $"{name} {distance:F0}", color);
     }
 
     private Vector2 InverseScalePosition(Vector2 value)

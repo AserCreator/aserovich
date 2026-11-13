@@ -34,14 +34,14 @@ public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
         if (!ent.Comp.InitCircular)
             return;
 
-        Vector2 r = xform.WorldPosition - grav.Center;
+        Vector2 r = GetRelative(grav, xform, body);
         double dist = getLen(r);
 
         if (dist < 1f || body.Mass <= 0f)
             return;
 
-        double targetGM = grav.G * grav.Mass / body.Mass;
-        double speed = Math.Sqrt(targetGM / dist);
+        double effectiveGM = grav.G * grav.Mass / body.Mass;
+        double speed = Math.Sqrt(effectiveGM / dist);
 
         _physics.SetLinearVelocity(ent, new Vector2(r.Y, -r.X) * (float) (speed / dist), body: body);
     }
@@ -73,7 +73,7 @@ public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
         OrbitalGravityComponent grav,
         float frameTime)
     {
-        Vector2 r = xform.WorldPosition - grav.Center;//GetRelative(grav, xform, body);
+        Vector2 r = GetRelative(grav, xform, body);
         double dist = getLen(r);
 
         double impulse = ((grav.Mass*(float)grav.G)/(dist*dist));
@@ -89,7 +89,7 @@ public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
     }
     private Vector2 GetRelative(OrbitalGravityComponent grav, TransformComponent xform, PhysicsComponent body)
     {
-        var com = Vector2.Transform(body.LocalCenter, _xform.GetWorldMatrix(xform));
-        return new Vector2(com.X - grav.Center.X, com.Y - grav.Center.Y);
+        var centerOfMass = Vector2.Transform(body.LocalCenter, _xform.GetWorldMatrix(xform));
+        return centerOfMass - grav.Center;
     }
 }
