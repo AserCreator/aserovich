@@ -450,10 +450,10 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
                 worldToView);
         }
 
-        var color = Color.Cyan.WithAlpha(0.7f);
+        var color = Color.Cyan.WithAlpha(0.4f);
         handle.DrawPrimitives(DrawPrimitiveTopology.LineStrip, _orbitPoints, color);
-        handle.DrawCircle(Vector2.Transform(grav.Center + r, worldToView), 4f, Color.Yellow);
-        handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Yellow);
+        handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Green);
+        DrawGridMarker(handle, worldToView, xform, grav.Center + r);
 
         // У круговой орбиты апсиды не имеют смысла.
         if (ecc < 0.001)
@@ -484,6 +484,22 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
         handle.DrawCircle(screen, 4f, color);
         handle.DrawString(Font, screen + new Vector2(8f, -8f), $"{name} {distance:F0}", color);
+    }
+    private readonly Vector2[] _gridMarker = new Vector2[3];
+
+    /// Треугольник в центре масс грида, повёрнутый так же, как грид.
+    private void DrawGridMarker(DrawingHandleScreen handle, Matrix3x2 worldToView, TransformComponent xform, Vector2 centerWorld)
+    {
+        var center = Vector2.Transform(centerWorld, worldToView);
+
+        var forward = Vector2.Normalize(Vector2.TransformNormal(Vector2.UnitY, _transform.GetWorldMatrix(xform) * worldToView));
+        var side = new Vector2(-forward.Y, forward.X);
+
+        _gridMarker[0] = center + forward * 12;
+        _gridMarker[1] = center - forward * 12 * 0.5f + side * 12 * 0.6f;
+        _gridMarker[2] = center - forward * 12 * 0.5f - side * 12 * 0.6f;
+
+        handle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, _gridMarker, Color.Yellow);
     }
     private void DrawVelocity(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid, Color color)
     {

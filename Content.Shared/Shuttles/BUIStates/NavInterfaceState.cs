@@ -20,7 +20,7 @@ public sealed class NavInterfaceState
 
     public Dictionary<NetEntity, List<DockingPortState>> Docks;
 
-    public bool RotateWithEntity = true;
+    public bool RotateWithEntity = false;
 
     public NavInterfaceState(
         float maxRange,
