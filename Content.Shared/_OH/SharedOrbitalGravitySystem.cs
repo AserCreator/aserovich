@@ -16,9 +16,4 @@ public abstract partial class SharedOrbitalGravitySystem : EntitySystem
     [Dependency] private IGameTiming _timing = default!;
     [Dependency] private INetManager _net = default!;
 
-    //private EntityQuery<OrbitalGravityComponent> _gravQuery;
-
-    // Временная отладка: раз в 5 секунд выводим состояние каждого орбитального тела.
-    //private TimeSpan _nextDebug;
-    //private bool _debugTick;
 }
