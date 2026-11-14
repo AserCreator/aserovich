@@ -1,96 +1,78 @@
 using System.Numerics;
+using Content.Shared._OH;
 using Robust.Shared.GameObjects;
-using Robust.Shared.IoC;
-using Robust.Shared.Network;
+using Robust.Shared.Map.Components;
 using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
-using Robust.Shared.Physics.Systems;
-using Robust.Shared.Timing;
-using Content.Shared._OH;
 
 namespace Content.Server._OH;
 
-public sealed partial class OrbitalGravitySystem : SharedOrbitalGravitySystem
+public sealed class OrbitalGravitySystem : SharedOrbitalGravitySystem
 {
-    [Dependency] private SharedPhysicsSystem _physics = default!;
-    [Dependency] private SharedTransformSystem _xform = default!;
-    [Dependency] private IGameTiming _timing = default!;
-    [Dependency] private INetManager _net = default!;
-
-    private EntityQuery<OrbitalGravityComponent> _gravQuery;
     public override void Initialize()
     {
-        _gravQuery = GetEntityQuery<OrbitalGravityComponent>();
+        base.Initialize();
+
         SubscribeLocalEvent<OrbitalBodyComponent, MapInitEvent>(OnMapInit);
     }
+
     private void OnMapInit(Entity<OrbitalBodyComponent> ent, ref MapInitEvent args)
     {
-        if (!TryComp(ent, out PhysicsComponent? body) || !TryComp(ent, out TransformComponent? xform))
-            return;
-
-        if (xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
-            return;
-
         if (!ent.Comp.InitCircular)
             return;
 
-        Vector2 r = GetRelative(grav, xform, body);
-        double dist = getLen(r);
+        if (!TryComp(ent, out PhysicsComponent? body) || !TryComp(ent, out TransformComponent? xform))
+            return;
+
+        if (xform.MapUid is not { } map || !GravQuery.TryComp(map, out var grav))
+            return;
+
+        var r = GetRelative(grav, xform, body);
+        var dist = r.Length();
 
         if (dist < 1f || body.Mass <= 0f)
             return;
 
-        double effectiveGM = grav.G * grav.Mass;
-        double speed = Math.Sqrt(effectiveGM / dist);
+        var speed = GetCircularSpeed(grav, dist);
 
-        _physics.SetLinearVelocity(ent, new Vector2(r.Y, -r.X) * (float) (speed / dist), body: body);
+        // Перпендикуляр к радиус-вектору, по часовой стрелке
+        Physics.SetLinearVelocity(ent, new Vector2(r.Y, -r.X) * (speed / dist), body: body);
     }
+
     public override void Update(float frameTime)
     {
         if (frameTime <= 0f)
             return;
 
-        //_debugTick = _net.IsServer && _timing.CurTime >= _nextDebug;
-
         var query = EntityQueryEnumerator<OrbitalBodyComponent, PhysicsComponent, TransformComponent>();
-        while (query.MoveNext(out var uid, out var orbital, out var body, out var xform))
+        while (query.MoveNext(out var uid, out _, out var body, out var xform))
         {
             if (body.BodyType != BodyType.Dynamic || body.Mass <= 0f)
                 continue;
 
-            if (xform.MapUid is not { } map || !_gravQuery.TryComp(map, out var grav))
-            {
+            if (xform.MapUid is not { } map || !GravQuery.TryComp(map, out var grav))
                 continue;
-            }
-            TickPhysics(uid, orbital, body, xform, grav, frameTime);
+
+            ApplyGravity(uid, body, xform, grav, frameTime);
         }
     }
-    private void TickPhysics(
+
+    private void ApplyGravity(
         EntityUid uid,
-        OrbitalBodyComponent orbital,
         PhysicsComponent body,
         TransformComponent xform,
         OrbitalGravityComponent grav,
         float frameTime)
     {
-        Vector2 r = xform.WorldPosition - grav.Center;
-        double dist = getLen(r);
+        var r = Xform.GetWorldPosition(xform) - grav.Center;
+        var dist = r.Length();
 
         if (dist < 1f)
             return;
 
-        double forceDist = Math.Max(dist, grav.MinRadius);
-        double impulse = grav.Mass * (float) grav.G / (forceDist * forceDist) * body.Mass;
+        var force = GetGravityForce(grav, dist, body.Mass);
 
-        _physics.ApplyLinearImpulse(uid, -r.Normalized() * (float) impulse * frameTime, body: body);
+        Physics.ApplyLinearImpulse(uid, -Vector2.Normalize(r) * (float) force * frameTime, body: body);
     }
-    public double getLen(Vector2 vec)
-    {
-        return Math.Sqrt(vec.X*vec.X + vec.Y*vec.Y);
-    }
-    private Vector2 GetRelative(OrbitalGravityComponent grav, TransformComponent xform, PhysicsComponent body)
-    {
-        var centerOfMass = Vector2.Transform(body.LocalCenter, _xform.GetWorldMatrix(xform));
-        return centerOfMass - grav.Center;
-    }
+
 }
