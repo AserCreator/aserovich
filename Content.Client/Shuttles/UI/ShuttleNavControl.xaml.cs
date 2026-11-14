@@ -183,7 +183,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
             DrawGrid(handle, ourGridToView, (ourGridId.Value, ourGrid), color);
             DrawDocks(handle, ourGridId.Value, ourGridToView);
-            DrawOrbit(handle, worldToShuttle * shuttleToView, ourGridId.Value);
+            DrawOrbit(handle, worldToView, ourGridId.Value);
             DrawVelocity(handle, worldToView, ourGridId.Value, color);
         }
 

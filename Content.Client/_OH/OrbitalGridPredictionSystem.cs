@@ -6,6 +6,7 @@ using Robust.Shared.Physics;
 using Robust.Shared.Physics.Components;
 using Robust.Shared.Player;
 using Robust.Shared.Timing;
+using Robust.Shared.Physics.Systems;
 
 namespace Content.Client._OH;
 
@@ -21,7 +22,7 @@ public sealed class OrbitalGridPredictionSystem : EntitySystem
     [Dependency] private readonly SharedTransformSystem _xform = default!;
 
     // Гриды дальше этого расстояния от игрока не продвигаем, чтобы не тратить время
-    private const float Range = 100f;
+    private const float Margin = 15f;
 
     public override void Update(float frameTime)
     {
@@ -32,7 +33,7 @@ public sealed class OrbitalGridPredictionSystem : EntitySystem
         var playerPos = _xform.GetWorldPosition(playerXform);
 
         var query = EntityQueryEnumerator<OrbitalBodyComponent, MapGridComponent, PhysicsComponent, TransformComponent>();
-        while (query.MoveNext(out var uid, out _, out _, out var body, out var xform))
+        while (query.MoveNext(out var uid, out _, out var grid, out var body, out var xform))
         {
             if (body.BodyType != BodyType.Dynamic || body.LinearVelocity == Vector2.Zero)
                 continue;
@@ -40,10 +41,13 @@ public sealed class OrbitalGridPredictionSystem : EntitySystem
             if (xform.MapID != playerXform.MapID)
                 continue;
 
-            // Родитель грида — карта, поэтому локальная позиция равна мировой
-            if ((xform.LocalPosition - playerPos).LengthSquared() > Range * Range)
+            // Положение игрока в системе координат грида (учитывает поворот грида)
+            var localPos = Vector2.Transform(playerPos, _xform.GetInvWorldMatrix(xform));
+
+            if (!grid.LocalAABB.Enlarged(Margin).Contains(localPos))
                 continue;
 
+            // Родитель грида — карта, поэтому локальная позиция равна мировой
             _xform.SetLocalPosition(uid, xform.LocalPosition + body.LinearVelocity * frameTime, xform);
         }
     }
