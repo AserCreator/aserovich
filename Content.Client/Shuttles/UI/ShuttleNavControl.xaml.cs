@@ -188,8 +188,9 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
             DrawGrid(handle, ourGridToView, (ourGridId.Value, ourGrid), color);
             DrawDocks(handle, ourGridId.Value, ourGridToView);
-            DrawOrbit(handle, worldToView, ourGridId.Value);
+            DrawOrbit(handle, worldToView, ourGridId.Value, color, own: true);
             DrawVelocity(handle, worldToView, ourGridId.Value, color);
+            DrawGridMarker(handle, worldToView, ourGridId.Value, Color.Cyan);
             DrawDebugTrail(handle, worldToShuttle * shuttleToView, ourGridId.Value);
         }
 
@@ -299,6 +300,8 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
 
             DrawGrid(handle, curGridToView, grid, labelColor);
             DrawDocks(handle, gUid, curGridToView);
+            DrawGridMarker(handle, worldToView, gUid, labelColor);
+            DrawOrbit(handle, worldToView, gUid, labelColor, own: false);
             DrawVelocity(handle, worldToView, gUid, labelColor);
         }
 
@@ -389,7 +392,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
     private EntityUid? _smoothedGrid;
     private double _smoothedDirection, _smoothedEx, _smoothedEy, _smoothedP;
 
-    private void DrawOrbit(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid)
+    private void DrawOrbit(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid, Color gridColor, bool own)
     {
         if (!EntManager.TryGetComponent(gridUid, out TransformComponent? xform) ||
             !EntManager.TryGetComponent(gridUid, out PhysicsComponent? body) ||
@@ -413,38 +416,48 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             return;
 
         // Эффективное GM, как в TickPhysics (импульс без умножения на массу).
-        double effectiveGM = grav.G * grav.Mass;
-        double k = v.LengthSquared() / effectiveGM - 1 / radius;
+        double gm = grav.G * grav.Mass;
+        double k = v.LengthSquared() / gm - 1 / radius;
         double radialDot = r.X * v.X + r.Y * v.Y;
         double direction = h > 0 ? 1 : -1;
 
-        // Первый кадр или смена грида/направления: blend = 1, то есть без сглаживания.
-        var blend = _smoothedGrid == gridUid && _smoothedDirection == direction
-            ? 1 - Math.Exp(-_timing.FrameTime.TotalSeconds / 1) // 1 - OrbitSmoothingTime
-            : 1;
-
-        _smoothedGrid = gridUid;
-        _smoothedDirection = direction;
-        _smoothedEx += (k * r.X - radialDot / effectiveGM * v.X - _smoothedEx) * blend;
-        _smoothedEy += (k * r.Y - radialDot / effectiveGM * v.Y - _smoothedEy) * blend;
-        _smoothedP += (h * h / effectiveGM - _smoothedP) * blend;
-
         // Вектор эксцентриситета (ex, ey) направлен на периапсис, p - параметр орбиты.
-        double ex = _smoothedEx, ey = _smoothedEy, p = _smoothedP;
+        double ex = k * r.X - radialDot / gm * v.X;
+        double ey = k * r.Y - radialDot / gm * v.Y;
+        double p = h * h / gm;
+
+        if (own)
+        {
+            // Первый кадр или смена грида/направления: blend = 1, то есть без сглаживания.
+            var blend = _smoothedGrid == gridUid && _smoothedDirection == direction
+                ? 1 - Math.Exp(-_timing.FrameTime.TotalSeconds / 0.1) // 0.1 - OrbitSmoothingTime
+                : 1;
+
+            _smoothedGrid = gridUid;
+            _smoothedDirection = direction;
+            ex = _smoothedEx += (ex - _smoothedEx) * blend;
+            ey = _smoothedEy += (ey - _smoothedEy) * blend;
+            p = _smoothedP += (p - _smoothedP) * blend;
+        }
+
         double ecc = Math.Sqrt(ex * ex + ey * ey);
         double periapsisAngle = Math.Atan2(ey, ex);
 
         // Апоапсис и период есть только у замкнутой орбиты.
         var closed = ecc < 1;
-        Orbit = new OrbitInfo(
-            ecc,
-            p / (1 + ecc),
-            closed ? p / (1 - ecc) : null,
-            closed ? 2 * Math.PI * Math.Pow(p / (1 - ecc * ecc), 1.5) / Math.Sqrt(effectiveGM) : null);
+
+        if (own)
+        {
+            Orbit = new OrbitInfo(
+                ecc,
+                p / (1 + ecc),
+                closed ? p / (1 - ecc) : null,
+                closed ? 2 * Math.PI * Math.Pow(p / (1 - ecc * ecc), 1.5) / Math.Sqrt(gm) : null);
+        }
 
         // Эллипс рисуем целиком, гиперболу (грид улетает) обрезаем по максимальному радиусу.
         const double maxRadius = 20000;
-        double limit = ecc < 1 ? Math.PI : Math.Acos(Math.Clamp((p / maxRadius - 1) / ecc, -1, 1));
+        double limit = closed ? Math.PI : Math.Acos(Math.Clamp((p / maxRadius - 1) / ecc, -1, 1));
 
         for (var i = 0; i <= OrbitSegments; i++)
         {
@@ -456,18 +469,22 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
                 worldToView);
         }
 
-        var color = Color.Cyan.WithAlpha(0.4f);
+        var color = own ? Color.Cyan.WithAlpha(0.4f) : gridColor.WithAlpha(0.1f);
         handle.DrawPrimitives(DrawPrimitiveTopology.LineStrip, _orbitPoints, color);
-        handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Cyan);
-        DrawGridMarker(handle, worldToView, xform, grav.Center + r);
 
+        // Центр притяжения и апсиды показываем только для своего грида.
         // У круговой орбиты апсиды не имеют смысла.
+        if (!own)
+            return;
+
+        handle.DrawCircle(Vector2.Transform(grav.Center, worldToView), 10f, Color.Cyan);
+
         if (ecc < 0.001)
             return;
 
         DrawApsis(handle, worldToView, grav.Center, periapsisAngle, p / (1 + ecc), "Пе", color);
 
-        if (ecc < 1)
+        if (closed)
             DrawApsis(handle, worldToView, grav.Center, periapsisAngle + Math.PI, p / (1 - ecc), "Ап", color);
     }
 
@@ -494,18 +511,22 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
     private readonly Vector2[] _gridMarker = new Vector2[3];
 
     /// Треугольник в центре масс грида, повёрнутый так же, как грид.
-    private void DrawGridMarker(DrawingHandleScreen handle, Matrix3x2 worldToView, TransformComponent xform, Vector2 centerWorld)
+    private void DrawGridMarker(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid, Color color)
     {
-        var center = Vector2.Transform(centerWorld, worldToView);
+        if (!EntManager.TryGetComponent(gridUid, out PhysicsComponent? body))
+            return;
 
-        var forward = Vector2.Normalize(Vector2.TransformNormal(Vector2.UnitY, _transform.GetWorldMatrix(xform) * worldToView));
+        var gridToWorld = _transform.GetWorldMatrix(gridUid);
+        var center = Vector2.Transform(Vector2.Transform(body.LocalCenter, gridToWorld), worldToView);
+
+        var forward = Vector2.Normalize(Vector2.TransformNormal(Vector2.UnitY, gridToWorld * worldToView));
         var side = new Vector2(-forward.Y, forward.X);
 
         _gridMarker[0] = center + forward * 12;
         _gridMarker[1] = center - forward * 12 * 0.5f + side * 12 * 0.6f;
         _gridMarker[2] = center - forward * 12 * 0.5f - side * 12 * 0.6f;
 
-        handle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, _gridMarker, Color.Cyan);
+        handle.DrawPrimitives(DrawPrimitiveTopology.TriangleList, _gridMarker, color);
     }
     private void DrawVelocity(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid, Color color)
     {
