@@ -66,6 +66,11 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         _maps = EntManager.System<SharedMapSystem>();
         _shuttles = EntManager.System<SharedShuttleSystem>();
         _transform = EntManager.System<SharedTransformSystem>();
+
+        for (int i = 0; i < segmentsA; i++)
+        {
+            segmentsList.Add(new Vector2(0,0));
+        }
     }
 
     public void SetMatrix(EntityCoordinates? coordinates, Angle? angle)
@@ -185,6 +190,7 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
             DrawDocks(handle, ourGridId.Value, ourGridToView);
             DrawOrbit(handle, worldToView, ourGridId.Value);
             DrawVelocity(handle, worldToView, ourGridId.Value, color);
+            DrawDebugTrail(handle, worldToShuttle * shuttleToView, ourGridId.Value);
         }
 
         // Draw radar position on the station
@@ -516,6 +522,33 @@ public sealed partial class ShuttleNavControl : BaseShuttleControl
         handle.DrawLine(start, end, lineColor);
         handle.DrawRect(new UIBox2(end.X - 5, end.Y - 5, end.X + 5, end.Y + 5), lineColor);
     }
+    public const int segmentsA = 5000;
+    public List<Vector2> segmentsList = new List<Vector2>();
+    private void DrawDebugTrail(DrawingHandleScreen handle, Matrix3x2 worldToView, EntityUid gridUid)
+    {
+        if (!EntManager.TryGetComponent(gridUid, out TransformComponent? xform) ||
+            !EntManager.TryGetComponent(gridUid, out PhysicsComponent? body) ||
+            !EntManager.HasComponent<OrbitalBodyComponent>(gridUid) ||
+            xform.MapUid is not { } map ||
+            !EntManager.TryGetComponent(map, out OrbitalGravityComponent? grav) ||
+            body.Mass <= 0f)
+        {
+            return;
+        }
+        var color = Color.Red.WithAlpha(0.7f);
+
+
+        for (var i = 1; i < segmentsList.Count; i++)
+        {
+            segmentsList[i-1] = segmentsList[i];
+        }
+        segmentsList[segmentsList.Count-1] = xform.WorldPosition;  // 0 1 2 3    4    3
+
+        for (int i = 1; i < segmentsList.Count; i++)
+        {
+            handle.DrawLine(Vector2.Transform(segmentsList[i-1], worldToView), Vector2.Transform(segmentsList[i], worldToView), color);
+        }
+}
     private Vector2 InverseScalePosition(Vector2 value)
     {
         return (value - MidPointVector) / MinimapScale;
