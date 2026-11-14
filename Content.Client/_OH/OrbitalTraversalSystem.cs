@@ -29,7 +29,11 @@ public sealed class OrbitalTraversalSystem : EntitySystem
 
         var xform = Transform(player);
 
-        // На орбитальной карте автоматическую смену родителя выключаем
-        xform.GridTraversal = !(xform.MapUid is { } map && _gravQuery.HasComp(map));
+        var onOrbitalMap = xform.MapUid is { } map && _gravQuery.HasComp(map);
+        var inSpace = xform.ParentUid == xform.MapUid;
+
+        // На орбитальной карте: в космосе клиент сам может зацепиться за грид,
+        // а покидает грид игрок только по решению сервера
+        xform.GridTraversal = !onOrbitalMap || inSpace;
     }
 }
